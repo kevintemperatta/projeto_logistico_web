@@ -7,10 +7,10 @@ from engine import RoteirizadorEngine
 from sklearn.cluster import KMeans
 
 # Configurações Iniciais
-st.set_page_config(page_title="Roteirizador Master Pro", layout="wide", page_icon="🚚")
+st.set_page_config(page_title="Roteirizador", layout="wide", page_icon="🚚")
 engine = RoteirizadorEngine()
 
-st.title("🚚 Roteirizador - Visualização de Recorrência")
+st.title("🚚 Roteirizador - Visualização de Rota")
 
 uploaded_file = st.sidebar.file_uploader("1. Subir base Excel", type=["xlsx"])
 
