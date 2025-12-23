@@ -2,29 +2,43 @@ import streamlit as st
 import pandas as pd
 import folium
 import io
+import os
 from streamlit_folium import st_folium
 from engine import RoteirizadorEngine
 from sklearn.cluster import KMeans
 
 # Configurações Iniciais
-st.set_page_config(page_title="Roteirizador", layout="wide", page_icon="🚚")
+st.set_page_config(page_title="Roteirizador Master Pro", layout="wide", page_icon="🚚")
 engine = RoteirizadorEngine()
 
-st.title("🚚 Roteirizador - Visualização de Rota")
+# --- CONFIGURAÇÃO DO CAMINHO DO ARQUIVO ---
+# Coloque o nome exato do seu arquivo aqui (ele deve estar na mesma pasta do app.py)
+CAMINHO_ARQUIVO = "base_com_coordenadas.xlsx" 
 
-uploaded_file = st.sidebar.file_uploader("1. Subir base Excel", type=["xlsx"])
+st.title("🚚 Roteirização Inteligente")
 
-if uploaded_file:
-    df_raw = pd.read_excel(uploaded_file)
-    vendedor = st.sidebar.selectbox("2. Selecione o Vendedor", df_raw['REPRESENTANTE'].unique())
+# Verifica se o arquivo existe na pasta
+if os.path.exists(CAMINHO_ARQUIVO):
+    # Carregamento automático (Cache para performance)
+    @st.cache_data
+    def carregar_dados(caminho):
+        return pd.read_excel(caminho)
+
+    df_raw = carregar_dados(CAMINHO_ARQUIVO)
     
+    # --- SIDEBAR: APENAS SELEÇÃO DE REPRESENTANTE ---
+    st.sidebar.header("Filtros de Rota")
+    vendedores = sorted(df_raw['REPRESENTANTE'].unique())
+    vendedor = st.sidebar.selectbox("Selecione o Representante", vendedores)
+    
+    # Filtragem dos dados
     df_v = df_raw[df_raw['REPRESENTANTE'] == vendedor].dropna(subset=['lat', 'lon']).reset_index(drop=True)
     num_lojas = len(df_v)
 
     if st.sidebar.button("⚡ Gerar Planejamento Mensal"):
-        with st.spinner(f"Processando lógica..."):
+        with st.spinner(f"Processando roteiro para {vendedor}..."):
             
-            # 1. AGRUPAMENTO GEOGRÁFICO (Clusters)
+            # 1. AGRUPAMENTO GEOGRÁFICO
             kmeans = KMeans(n_clusters=4, n_init=100, random_state=42)
             df_v['CLUSTER'] = kmeans.fit_predict(df_v[['lat', 'lon']])
             
@@ -55,18 +69,21 @@ if uploaded_file:
                 res['SEQUENCIA'] = range(1, len(res) + 1)
                 res['TEMPO_DESLOC_MIN'] = [round(t/60, 1) for t in tempos]
                 res['DIST_KM'] = [round(d/1000, 1) for d in dists]
-                res['LINK_MAPS'] = "https://www.google.com/maps/search/?api=1&query=" + res['lat'].astype(str) + "," + res['lon'].astype(str)
+                res['LINK_MAPS'] = "https://www.google.com/maps/dir/" + res['lat'].astype(str) + "," + res['lon'].astype(str)
                 st.session_state['resultado'] = res
 
+    # --- EXIBIÇÃO DOS RESULTADOS ---
     if 'resultado' in st.session_state:
         res = st.session_state['resultado']
-        modo_visao = st.sidebar.radio("Filtrar Mapa:", ["Mês Inteiro", "Semana 1", "Semana 2", "Semana 3", "Semana 4"])
+        
+        # Filtro de visão semanal
+        modo_visao = st.sidebar.radio("Ver no Mapa:", ["Mês Inteiro", "Semana 1", "Semana 2", "Semana 3", "Semana 4"])
         df_mapa = res if modo_visao == "Mês Inteiro" else res[res['SEMANA'] == modo_visao]
 
-        # KPIs
+        # KPIs DINÂMICOS (Não foram retirados)
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Visitas", len(df_mapa))
-        c2.metric("Distância", f"{round(df_mapa['DIST_KM'].sum(), 1)} km")
+        c1.metric("Total de Visitas", len(df_mapa))
+        c2.metric("Distância Est.", f"{round(df_mapa['DIST_KM'].sum(), 1)} km")
         c3.metric("Tempo Estrada", f"{round(df_mapa['TEMPO_DESLOC_MIN'].sum(), 1)} min")
         c4.metric("Tempo em Loja", f"{(len(df_mapa) * 45) / 60:.1f}h")
 
@@ -79,7 +96,7 @@ if uploaded_file:
             m = folium.Map(location=[df_mapa['lat'].mean(), df_mapa['lon'].mean()], zoom_start=11)
             cores = {"Semana 1": "#3498db", "Semana 2": "#2ecc71", "Semana 3": "#f39c12", "Semana 4": "#9b59b6"}
             
-            # Mapeamento de semanas para o card
+            # Info de recorrência para os cards
             semanas_por_loja = res.groupby('NOME_LOJA')['SEMANA'].apply(
                 lambda x: ", ".join(sorted(set([s.replace("Semana ", "S") for s in x])))
             ).to_dict()
@@ -87,26 +104,20 @@ if uploaded_file:
             for _, row in df_mapa.iterrows():
                 cor = cores.get(row['SEMANA'], "gray")
                 glow = "border: 3px solid #FFD700; box-shadow: 0 0 10px #FFD700;" if row['REPETIDA'] else "border: 2px solid white;"
+                ciclo = semanas_por_loja[row['NOME_LOJA']]
                 
-                # Texto formatado para o card
-                txt_ciclo = semanas_por_loja[row['NOME_LOJA']]
-                label_recorrente = "⭐ RECORRENTE" if row['REPETIDA'] else "Visita Única"
-                
-                # Criando o conteúdo do card de forma mais segura
+                # HTML do Card (Popup)
                 html_card = f"""
-                <div style="font-family: Arial; font-size: 12px; min-width: 150px;">
+                <div style="font-family: Arial; font-size: 12px; width: 160px;">
                     <b>{row['NOME_LOJA']}</b><br>
-                    Parada: {row['SEQUENCIA']}º<br>
-                    Ciclo: {txt_ciclo}<br>
-                    <i style="color: gold;">{label_recorrente}</i>
+                    <b>Ciclo:</b> {ciclo}<br>
+                    <b>Parada:</b> {row['SEQUENCIA']}º
                 </div>
                 """
                 
                 folium.Marker(
                     location=[row['lat'], row['lon']],
-                    # Tooltip aparece ao passar o mouse
-                    tooltip=f"{row['NOME_LOJA']} (Ciclo: {txt_ciclo})",
-                    # Popup aparece ao clicar
+                    tooltip=f"{row['NOME_LOJA']} (Semanas: {ciclo})",
                     popup=folium.Popup(html_card, max_width=200),
                     icon=folium.DivIcon(html=f"""
                         <div style="background-color:{cor}; color:white; border-radius:50%; width:28px; height:28px; 
@@ -115,7 +126,7 @@ if uploaded_file:
                         </div>""")
                 ).add_to(m)
             
-            if len(df_mapa) > 1:
-                folium.PolyLine(df_mapa[['lat', 'lon']].values.tolist(), color="gray", weight=2, opacity=0.4).add_to(m)
-            
             st_folium(m, width="100%", height=600)
+
+else:
+    st.error(f"❌ Arquivo '{CAMINHO_ARQUIVO}' não encontrado na pasta do projeto. Por favor, verifique o nome do arquivo.")
