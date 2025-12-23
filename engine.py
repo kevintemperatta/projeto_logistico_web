@@ -1,44 +1,48 @@
-import requests
 from ortools.constraint_solver import routing_enums_pb2, pywrapcp
 import pandas as pd
 import numpy as np
 
 class RoteirizadorEngine:
-    def __init__(self, docker_url="http://router.project-osrm.org"):
-        # Alterado para o servidor público do OSRM para funcionar na nuvem
-        self.docker_url = docker_url
+    def __init__(self, docker_url=None):
+        # Não precisamos mais de URL externa, o cálculo será local
+        pass
+
+    def calcular_haversine(self, lat1, lon1, lat2, lon2):
+        # Calcula a distância real entre dois pontos na Terra (em metros)
+        R = 6371000  # Raio da Terra em metros
+        phi1, phi2 = np.radians(lat1), np.radians(lat2)
+        dphi = np.radians(lat2 - lat1)
+        dlambda = np.radians(lon2 - lon1)
+        a = np.sin(dphi/2)**2 + np.cos(phi1)*np.cos(phi2)*np.sin(dlambda/2)**2
+        return 2 * R * np.arctan2(np.sqrt(a), np.sqrt(1-a))
 
     def obter_matrizes(self, df):
-        coords = ";".join([f"{lon},{lat}" for lat, lon in zip(df['lat'], df['lon'])])
-        url = f"{self.docker_url}/table/v1/driving/{coords}?annotations=duration,distance"
+        n = len(df)
+        matrix_dist = np.zeros((n, n))
+        matrix_time = np.zeros((n, n))
         
-        try:
-            response = requests.get(url, timeout=10)
-            response.raise_for_status()
-            data = response.json()
-            return data['durations'], data['distances']
-        except Exception as e:
-            # PLANO B: Se o servidor de mapas falhar, calcula por distância euclidiana (linha reta)
-            # Isso evita que o app trave completamente
-            n = len(df)
-            matrix_dist = np.zeros((n, n))
-            matrix_time = np.zeros((n, n))
-            
-            for i in range(n):
-                for j in range(n):
-                    # Cálculo de distância aproximada em metros
-                    d = np.sqrt((df.iloc[i]['lat'] - df.iloc[j]['lat'])**2 + 
-                                (df.iloc[i]['lon'] - df.iloc[j]['lon'])**2) * 111320
-                    matrix_dist[i][j] = int(d)
-                    matrix_time[i][j] = int(d / 13) # Estimativa de 46 km/h (13 m/s)
-            return matrix_time.tolist(), matrix_dist.tolist()
+        for i in range(n):
+            for j in range(n):
+                if i == j:
+                    matrix_dist[i][j] = 0
+                    matrix_time[i][j] = 0
+                else:
+                    dist = self.calcular_haversine(
+                        df.iloc[i]['lat'], df.iloc[i]['lon'],
+                        df.iloc[j]['lat'], df.iloc[j]['lon']
+                    )
+                    # Adicionamos um fator de 1.3 (30%) para simular as curvas das ruas
+                    dist_estimada = dist * 1.3 
+                    matrix_dist[i][j] = int(dist_estimada)
+                    # Tempo estimado: Distância / 11 m/s (aprox 40km/h urbano)
+                    matrix_time[i][j] = int(dist_estimada / 11)
+        
+        return matrix_time.tolist(), matrix_dist.tolist()
 
     def resolver_tsp(self, df):
+        # Agora o processo é 100% offline e seguro
         matrix_time, matrix_dist = self.obter_matrizes(df)
         
-        if not matrix_time:
-            return None, None, None
-
         manager = pywrapcp.RoutingIndexManager(len(matrix_time), 1, 0)
         routing = pywrapcp.RoutingModel(manager)
 
