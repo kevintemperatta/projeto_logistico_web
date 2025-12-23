@@ -8,7 +8,7 @@ from engine import RoteirizadorEngine
 from sklearn.cluster import KMeans
 
 # Configurações Iniciais
-st.set_page_config(page_title="Roteirizador Master Pro", layout="wide", page_icon="🚚")
+st.set_page_config(page_title="Roteirizador", layout="wide", page_icon="🚚")
 engine = RoteirizadorEngine()
 
 # --- CONFIGURAÇÃO DO CAMINHO DO ARQUIVO ---
